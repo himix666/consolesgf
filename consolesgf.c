@@ -1,4 +1,4 @@
-/* 19.04.2016 version 0.1
+/* 17.05.2016 version 0.11
  * japanese counting system , seki counting not implemented
  * all other japanese go rules implemented
  */
@@ -11,6 +11,181 @@
 #include<math.h>
 /* tui is a global variable, holding all text user interface data (board, command line, etc) */
 struct consolesgfTUI tui;
+/* algorithm description for updating free nodes list:
+   a) find suitable free node, n0, set head, tail to n0
+   b) iterate through tail to head, add adjacent free nodes to tail
+   c) set new head to previous tail, set tail to free nodes list new tail
+   d) if head is the same as tail - stop, otherwise go to b)
+start:
+    head,tail
+   +----+
+   | n0 | add 2 new nodes
+   +----+
+    head            tail
+   +----+  +----+  +----+
+   | n0 +<-+ n1 +<-+ n2 | update head and tail
+   +----+  +----+  +----+
+                    head    tail
+   +----+  +----+  +----+  +----+
+   | n0 +<-+ n1 +<-+ n2 +<-+ n3 | iterate from tail to head, add 1 new node
+   +----+  +----+  +----+  +----+
+                           head,tail 
+   +----+  +----+  +----+  +----+
+   | n0 +<-+ n1 +<-+ n2 +<-+ n3 | update head and tail, iterate from tail to head, head is tail - cycle is finished
+   +----+  +----+  +----+  +----+
+end:
+ */ 
+/* removeGroupForScoringStageTwo is a helper function for removeGroupForScoring:
+   removes enemy groups adjacent to freelist and adds untouched nodes adjacent to those enemy groups to freelist */
+void removeGroupForScoringStageTwo(struct TUIBoardNode * n, bool enemyColor, struct TUIBoardNode ** flist){
+    if(n && n->head && n->isBlack == enemyColor){
+	struct TUIBoardNode * it;
+	it = n->head->tail;
+	n->head->libs = 1; /* prepare group for removal, it must have exactly 1 lib */
+	removeStones(n);
+	do{
+	    if(it->left && !(it->left->head || it->left->next))
+		updateFreeList(it->left, flist);
+	    if(it->up && !(it->up->head || it->up->next))
+		updateFreeList(it->up, flist);
+	    if(it->right && !(it->right->head || it->right->next))
+		updateFreeList(it->right, flist);
+	    if(it->down && !(it->down->head || it->down->next))
+		updateFreeList(it->down, flist);
+	    if(it == it->next)
+		break;
+	}while((it = it->next));
+    }
+}
+/* removeGroupForScoring tries to remove selected by user captured groups.
+   captured groups are divided only by free space
+ */
+bool removeGroupForScoring(struct TUIBoardNode * n){
+    if(n->head == NULL)
+	return false;
+    tui.board.bTurn = !(n->isBlack); /* init done */
+    struct TUIBoardNode * it, * it2, * flist, * head, * tail;
+    it = n->head->tail; /* start stage 1: remove initial group and init list of free nodes */
+    flist = NULL;
+    n->head->libs = 1; /* prepare group for removal , it must have exactly 1 lib */
+    removeStones(n);
+    do{
+	if(it->left && !(it->left->head || it->left->next))
+	    updateFreeList(it->left, &flist);
+	if(it->up && !(it->up->head || it->up->next))
+	    updateFreeList(it->up, &flist);
+	if(it->right && !(it->right->head || it->right->next))
+	    updateFreeList(it->right, &flist);
+	if(it->down && !(it->down->head || it->down->next))
+	    updateFreeList(it->down, &flist);
+	if(it == it->next)
+	    break;
+    }while((it = it->next)); /* stage 1 finished */
+    /* stage 2: go through free nodes list, find adjacent captured groups, remove these groups, add not processed adjacent to removed groups free nodes, process new free nodes in the list. Then free nodes list is processed, clean it's fields. */
+    tail = flist->tail;
+    head = flist;
+    do{
+	it = tail;
+	do{
+	    removeGroupForScoringStageTwo(it->left, n->isBlack, &flist);
+	    removeGroupForScoringStageTwo(it->up, n->isBlack, &flist);
+	    removeGroupForScoringStageTwo(it->right, n->isBlack, &flist);
+	    removeGroupForScoringStageTwo(it->down, n->isBlack, &flist);
+	    if(it == head)
+		break;
+	}while((it = it->next));
+	head = tail;
+	tail = flist->tail;
+    }while(head != tail);
+    it = flist->tail;
+    do{
+	it2 = it;
+	it = it->next;
+	it2->next = NULL;
+	it2->tail = NULL;
+    }while(it != it2);
+    tui.board.undoRefreshesGame = true; /* finishing successful removal */
+    return true;
+}
+/* updateFreeListTail is a helper function for updateFreeList:
+   updates tail of provided list with new node if possible */
+void updateFreeListTail(struct TUIBoardNode * n, struct TUIBoardNode * flist){
+    if(n && !(n->head || n->next)){ /* new node must not be in any list */
+	n->next = flist->tail;
+	flist->tail = n;
+    }
+}
+/* updateFreeList is a helper function for removeGroupForScoring:
+   updates list of free nodes by adding n and adjacent to n nodes */
+void updateFreeList(struct TUIBoardNode * n, struct TUIBoardNode ** flist){
+    struct TUIBoardNode * tail, * head, * it;
+    if(*flist){
+	head = (*flist)->tail;
+	updateFreeListTail(n, *flist);
+	tail = (*flist)->tail;
+    } else {
+	*flist = n;
+	tail = n;
+	head = n;
+	(*flist)->next = n;
+	(*flist)->tail = n;
+    }
+    do{
+	it = tail;
+	do{
+	    updateFreeListTail(it->left, *flist);
+	    updateFreeListTail(it->up, *flist);
+	    updateFreeListTail(it->right, *flist);
+	    updateFreeListTail(it->down, *flist);
+	}while((it = it->next) != head);
+	head = tail;
+	tail = (*flist)->tail;
+    }while(tail != head);
+}
+/* addMiscMessages adds miscellaneous messages under board on the screen */
+void addMiscMessages(){
+    wchar_t buf[30] = {L'\0'};
+    /* misc messages like "remove dead groups" */
+    int miscMsgStartLine = tui.board.size < 7? 15 : tui.board.size * 2 + 2;
+    if(tui.board.moveCount && miscMsgStartLine < LINES){ /* show previous move if moves have been done */
+	if(tui.board.moves[tui.board.moveCount - 1] == NULL)
+	    mvaddnwstr(miscMsgStartLine, 0, L"  PASSED", COLS);
+	else{
+	    int coords = ((void *)(tui.board.moves[tui.board.moveCount - 1]) - (void *) tui.board.nodes) / sizeof(struct TUIBoardNode);
+	    wcsncpy(buf, L"  PLAYED   ", 11);
+	    buf[9] = csgfLiterals[2 + (coords % 19) * 2];
+	    if(tui.board.size - 1 - coords / 19 > 8){
+		buf[10] = L'1';
+		buf[11] = csgfDigits[tui.board.size - 1 - coords / 19][1];
+	    }
+	    else buf[10] = csgfDigits[tui.board.size - 1 - coords / 19][1];
+	    mvaddnwstr(miscMsgStartLine, 0, buf, COLS);
+	}
+	if(tui.board.moveCount % 2)
+	    mvaddnwstr(miscMsgStartLine, 0, L"B", COLS);
+	else
+	    mvaddnwstr(miscMsgStartLine, 0, L"W", COLS);
+	miscMsgStartLine += 2;
+    }
+    if(tui.board.tooManyMovesMsg && miscMsgStartLine < LINES){
+	mvaddnwstr(miscMsgStartLine , 0, L"NO MORE MOVES CAN BE DONE, YOU MAY ONLY UNDO A MOVE", COLS);
+	miscMsgStartLine += 2;
+    }
+    if(miscMsgStartLine < LINES){
+	if(tui.board.done == false){
+	    if(tui.board.passes == 2)
+		mvaddnwstr(miscMsgStartLine , 0, L"REMOVE DEAD GROUPS", COLS);
+	} else {
+	    float score = tui.board.bRemoved + tui.board.bTer - tui.board.wRemoved - tui.board.wTer - tui.board.komi;
+	    if(score > 0)
+		swprintf(buf, 29, L"BLACK WINS BY %.1f POINTS", score);
+	    else
+		swprintf(buf, 29, L"WHITE WINS BY %.1f POINTS", fabsf(score));
+	    mvaddnwstr(miscMsgStartLine , 0, buf, COLS);
+	    miscMsgStartLine += 2;
+	}
+    }
+}
 /* helper for function countTerritory: adds new node to seed list or updates seed's affiliation */
 void updateSeed(struct TUIBoardNode * n, struct TUIBoardNode * seed, bool * black, bool * white){
     if(n){
@@ -78,22 +253,13 @@ void undoMove(){
     tui.board.done = false; 
     tui.board.koSpace = NULL;
     for(int i = 0; i < tui.board.size; i++)
-	for(int j = 0; j < tui.board.size; j++)
+	for(int j = 0; j < tui.board.size; j++){
 	    tui.board.nodes[i][j].head = NULL;
+	    tui.board.nodes[i][j].next = NULL;
+	    tui.board.nodes[i][j].tail = NULL;
+	}
     for(int i = 0; i < mc; i++)
 	makeMove(tui.board.moves[i]);
-}
-/* removeGroupForScoring tries to remove selected by user group */
-bool removeGroupForScoring(struct TUIBoardNode * n){
-    if(n->head == NULL)
-	return false;
-    /* bool temp = tui.board.bTurn; */
-    tui.board.bTurn = !(n->isBlack);
-    n->head->libs = 1; /* prepare group for removal , it must have exactly 1 lib */
-    removeStones(n);
-    /* tui.board.bTurn = temp; */
-    tui.board.undoRefreshesGame = true;
-    return true;
 }
 /* cleanGhostNodes makes free nodes really clean and ready for done-phase */
 void cleanGhostNodes(){
@@ -248,6 +414,7 @@ bool isSuicide(struct TUIBoardNode * n){
 /* updates to be removed group's neighbour friendly groups' libs and removes group */
 void removeStones(struct TUIBoardNode * n){ 
     if(n && n->head && n->isBlack != tui.board.bTurn && n->head->libs == 1){
+	struct TUIBoardNode * head = n->head;
 	if(tui.board.bTurn)
 	    tui.board.bRemoved += n->head->size;
 	else
@@ -285,6 +452,7 @@ void removeStones(struct TUIBoardNode * n){
 		if(n1->down != n2 && n1->down != n3)
 			n1->down->head->libs = n1->down->head->libs + 1;
 	}while((n1 = n1->next));
+	head->next = head;
     }
 }
 /* sets ko to n-node's affected neighbour free space so next played stone cannot be placed in it */
@@ -352,6 +520,7 @@ bool initBoard(unsigned int size){
     tui.board.wRemoved = 0;
     tui.board.bRemoved = 0;
     tui.board.komi = 7.5;
+    tui.board.moveCount = 0;
     memset(tui.board.nodes, 0, MAX_BOARD_SIZE * MAX_BOARD_SIZE * sizeof(struct TUIBoardNode));
     for(int i = 1; i < tui.board.size - 1; i++){
 	tui.board.nodes[0][i].left = &(tui.board.nodes[0][i - 1]); /* top-nodes, up is NULL */
@@ -392,6 +561,7 @@ void parseCmdLineBuffer(){
     int cntChar = 0;
     unsigned int size = 0;
     if(tui.cmdLine.bufLen == 0){
+	curs_set(0);
 	tui.cmdLine.active = false;
 	redrawTUI();
 	return;
@@ -411,6 +581,7 @@ void parseCmdLineBuffer(){
 clearinput:
 	    default:
 		tui.cmdLine.bufLen = 0;
+		curs_set(0);
 		tui.cmdLine.active = false;
 		tui.cmdLine.buf[0] = L'\0';
 		redrawTUI();
@@ -424,7 +595,6 @@ clearinput:
    stones (B or W),
    command line if active */
 void redrawTUI(){
-    wchar_t scoreBuf[30] = {L'\0'};
     if(erase() == ERR){
 	endwin();
 	fprintf(stderr, "Cannot clear screen, aborting\n");
@@ -443,31 +613,12 @@ void redrawTUI(){
     if(COLS > tui.board.size * 2 + 9 && LINES > 13) /* print right panel if there is space for it */
 	for(int i = 0; i < 14; i++)
 	    mvaddwstr(i, tui.board.size * 2 + 4, tui.rightPanelBuf[i]);
+    addMiscMessages();
     if(tui.cmdLine.active){
 	if(tui.cmdLine.bufLen > COLS - 2)/* show end of buffer if it does not fit on screen */
 	    mvprintw(LINES - 1, 0, ":%ls", tui.cmdLine.buf + tui.cmdLine.bufLen - COLS + 2);
 	else
 	    mvprintw(LINES - 1, 0, ":%ls", tui.cmdLine.buf);
-    }
-    /* misc messages like "remove dead groups" */
-    int miscMsgStartLine = tui.board.size < 7? 15 : tui.board.size * 2 + 2;
-    if(tui.board.tooManyMovesMsg && miscMsgStartLine < LINES){
-	mvaddnwstr(miscMsgStartLine , 0, L"NO MORE MOVES CAN BE DONE, YOU MAY ONLY UNDO A MOVE", COLS);
-	miscMsgStartLine += 2;
-    }
-    if(miscMsgStartLine < LINES){
-	if(tui.board.done == false){
-	    if(tui.board.passes == 2)
-		mvaddnwstr(miscMsgStartLine , 0, L"REMOVE DEAD GROUPS", COLS);
-	} else {
-	    float score = tui.board.bRemoved + tui.board.bTer - tui.board.wRemoved - tui.board.wTer - tui.board.komi;
-	    if(score > 0)
-		swprintf(scoreBuf, 29, L"BLACK WINS BY %.1f POINTS", score);
-	    else
-		swprintf(scoreBuf, 29, L"WHITE WINS BY %.1f POINTS", fabsf(score));
-	    mvaddnwstr(miscMsgStartLine , 0, scoreBuf, COLS);
-	    miscMsgStartLine += 2;
-	}
     }
     refresh();
 }
@@ -589,6 +740,7 @@ void handleEvents(){
 			    escOrAltPressed = false;
 			if(tui.cmdLine.active == false){
 			    if(key == L':'){
+				curs_set(1);
 				tui.cmdLine.active = true;
 				redrawTUI();
 				break;
@@ -616,6 +768,7 @@ void handleEvents(){
 		else {
 		    tui.cmdLine.bufLen = 0;
 		    tui.cmdLine.buf[0] = L'\0';
+		    curs_set(0);
 		    tui.cmdLine.active = false;
 		    redrawTUI();
 		    break;
@@ -684,7 +837,7 @@ int main(){
     if(!setlocale(LC_ALL,"en_US.UTF-8")){
 	endwin();
 	fprintf(stderr, "Cannot set proper locale, aborting\n");
-	return -1;
+	return EXIT_FAILURE;
     }
     initscr(); /* start curses mode */
     if(has_colors() == FALSE){	
@@ -696,30 +849,31 @@ int main(){
     if(cbreak() == ERR){
 	endwin();
 	fprintf(stderr, "Cannot set cbreak mode, aborting\n");
-	return -1;
+	return EXIT_FAILURE;
     }
     if(halfdelay(10) == ERR){
 	endwin();
 	fprintf(stderr, "Cannot set input delay to 0,5 seconds, aborting\n");
-	return -1;
+	return EXIT_FAILURE;
     }
     if(ERR == noecho()){
 	endwin();
 	fprintf(stderr, "Cannot set off echo\n");
-	return -1;
+	return EXIT_FAILURE;
     }
     if(ERR == keypad(stdscr, TRUE)){
 	endwin();
 	fprintf(stderr, "Cannot activate keypad\n");
-	return -1;
+	return EXIT_FAILURE;
     }
     if(use_default_colors() == ERR){
 	endwin();
 	fprintf(stderr, "Cannot use default colors\n");
-	return -1;
+	return EXIT_FAILURE;
     }
     init_pair(1, COLOR_RED, -1); /* color pair for red text */
     initBoard(19); /* safe init */
+    curs_set(0);
     redrawTUI();
     handleEvents();
 

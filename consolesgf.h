@@ -54,6 +54,10 @@ bool removeGroupForScoring(struct TUIBoardNode * n);
 void undoMove();
 void countTerritory();
 void updateSeed(struct TUIBoardNode * n, struct TUIBoardNode * seed, bool * black, bool * white);
+void addMiscMessages();
+void updateFreeListTail(struct TUIBoardNode * n, struct TUIBoardNode * flist);
+void updateFreeList(struct TUIBoardNode * n, struct TUIBoardNode ** flist);
+void removeGroupForScoringStageTwo(struct TUIBoardNode * n, bool enemyColor, struct TUIBoardNode ** flist);
 
 wchar_t csgfLiterals[40] = {32,32,65,32,66,32,67,32,68,32,69,32,70,32,71,32,72,32,74,32,75,32,76,32,77,32,78,32,79,32,80,32,81,32,82,32,83,32,84,0};
 wchar_t csgfDigits[19][2] = {{32,49},{32,50},{32,51},{32,52},{32,53},{32,54},{32,55},{32,56},{32,57},{49,48},{49,49},{49,50},{49,51},{49,52},{49,53},{49,54},{49,55},{49,56},{49,57}};
